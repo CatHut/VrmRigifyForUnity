@@ -1,0 +1,21 @@
+name: Empty Workflow
+
+# このワークフローはトリガーされても何も実行しません
+on:
+  # 手動実行のみを許可
+  workflow_dispatch:
+    # オプションで手動実行時にパラメータを受け取ることも可能
+    inputs:
+      reason:
+        description: '実行理由'
+        required: false
+        default: 'テスト実行'
+
+jobs:
+  do-nothing:
+    runs-on: ubuntu-latest
+    steps:
+      # コメントだけのステップ
+      # 実際には何も実行されません
+      - name: No Operation
+        run: echo "このワークフローは何も実行しません"
