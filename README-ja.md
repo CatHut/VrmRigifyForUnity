@@ -1,6 +1,8 @@
 # VrmRigifyForUnity
 
-BlenderのVRMモデルからRigifyリグを自動生成し、Unity向けに最適化するアドオン
+BlenderのVRMモデルからRigifyリグを自動生成し、Unity向けに調整するアドオン
+
+![main](doc/main.png)
 
 ## 概要
 
@@ -36,10 +38,13 @@ VrmRigifyForUnityは、VRMフォーマットの3Dモデルを読み込み、Blen
 1. VRMモデルをBlenderにインポートします
 2. インポートしたVRMのアーマチュアを選択します
 3. 3Dビューのサイドバーから「VRM」タブを開きます
-4. 「Generate Rigify from VRM」ボタンをクリックします
-5. 必要に応じて変換設定（元のモデルを非表示にするなど）を調整します
+4. 必要に応じて変換設定（元のモデルを非表示にするなど）を調整します
+5. 「Generate Rigify from VRM」ボタンをクリックします
+![GenerateRigify](doc/GenerateRigify.png)
 6. 生成されたRigifyリグを使用してアニメーションを作成します
+![rig](doc/rig.png)
 7. コンストレイント影響度スライダーを使用して、コントロールリグの影響を調整できます
+![constraint_influence](doc/constraint_influence.png)
 
 ## 変換設定
 
