@@ -211,7 +211,7 @@ class VRM_OT_ToggleConstraintDrivers(Operator):
 
 class VRM_PT_ToRigifyPanel(Panel):
     """Panel for VrmRigify conversion"""
-    bl_label = "VrmRigify"
+    bl_label = "VrmRigifyForUnity"
     bl_idname = "VRM_PT_to_rigify"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
