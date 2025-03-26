@@ -40,10 +40,15 @@ VrmRigifyForUnityは、VRMフォーマットの3Dモデルを読み込み、Blen
 3. 3Dビューのサイドバーから「VRM」タブを開きます
 4. 必要に応じて変換設定（元のモデルを非表示にするなど）を調整します
 5. 「Generate Rigify from VRM」ボタンをクリックします
+
 ![GenerateRigify](doc/GenerateRigify.png)
+
 6. 生成されたRigifyリグを使用してアニメーションを作成します
+
 ![rig](doc/rig.png)
+
 7. コンストレイント影響度スライダーを使用して、コントロールリグの影響を調整できます
+
 ![constraint_influence](doc/constraint_influence.png)
 
 ## 変換設定
