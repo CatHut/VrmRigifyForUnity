@@ -1,3 +1,6 @@
+
+[日本語版 README はこちら / Japanese README here](README-ja.md)
+
 # VrmRigifyForUnity
 
 An addon to automatically generate Rigify rigs from VRM models in Blender and optimize them for Unity
