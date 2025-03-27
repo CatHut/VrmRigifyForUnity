@@ -24,6 +24,7 @@ VrmRigifyForUnityは、VRMフォーマットの3Dモデルを読み込み、Blen
 - Blender 4.3.0以上
 - Blenderの[Rigifyアドオン](https://docs.blender.org/manual/en/latest/addons/rigging/rigify/index.html)（Blenderに標準搭載）
 - [VRM Add-on for Blender](https://github.com/saturday06/VRM-Addon-for-Blender)
+- VRM1向けです。VRM0に対しては詳細な確認ができていません。
 
 ## インストール方法
 
