@@ -1,21 +1,37 @@
-name: Empty Workflow
+name: Release
 
-# このワークフローはトリガーされても何も実行しません
 on:
-  # 手動実行のみを許可
-  workflow_dispatch:
-    # オプションで手動実行時にパラメータを受け取ることも可能
-    inputs:
-      reason:
-        description: '実行理由'
-        required: false
-        default: 'テスト実行'
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
-  do-nothing:
+  release:
     runs-on: ubuntu-latest
+    
     steps:
-      # コメントだけのステップ
-      # 実際には何も実行されません
-      - name: No Operation
-        run: echo "このワークフローは何も実行しません"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set zip filename
+        run: echo "zip_filename=vrm_rigify_for_unity-${{ github.ref_name }}.zip" >> $GITHUB_ENV
+
+      - name: Copy LICENSE and NOTICE files
+        run: |
+          cp -p LICENSE vrm_rigify_for_unity/
+          cp -p NOTICE vrm_rigify_for_unity/
+
+      - name: Create zip file
+        run: |
+          zip -r "${{ env.zip_filename }}" vrm_rigify_for_unity -x "vrm_rigify_for_unity/__pycache__/*" "vrm_rigify_for_unity/**/__pycache__/*"
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: ${{ env.zip_filename }}
+          draft: true
+          generate_release_notes: true
+          prerelease: false
