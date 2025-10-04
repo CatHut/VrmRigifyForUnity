@@ -58,12 +58,12 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
         # VRM0のヒューマノイド設定のコピーと更新
         # 既にボーン名と階層が一致しているので、直接マッピングを行う
         for human_bone in armature_vrm.vrm_addon_extension.vrm0.humanoid.human_bones:
-            if human_bone.node.bone_name:
+            if hasattr(human_bone, 'node') and hasattr(human_bone.node, 'bone_name') and human_bone.node.bone_name:
                 original_bone = human_bone.node.bone_name
                 # 同じ名前のボーンがRigifyリグに存在するか確認
                 if original_bone in armature_rig.bones:
                     new_human_bone = next((hb for hb in armature_rig.vrm_addon_extension.vrm0.humanoid.human_bones if hb.bone == human_bone.bone), None)
-                    if new_human_bone:
+                    if new_human_bone and hasattr(new_human_bone, 'node'):
                         new_human_bone.node.bone_name = original_bone
         
     except Exception as e:
@@ -87,12 +87,12 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
             new_group.hit_radius = bone_group.hit_radius
             
             # 中心ボーンの設定
-            if bone_group.center.bone_name:
+            if hasattr(bone_group, 'center') and hasattr(bone_group.center, 'bone_name') and bone_group.center.bone_name:
                 new_group.center.bone_name = bone_group.center.bone_name
             
             # ボーンリストのコピー
             for bone in bone_group.bones:
-                if bone.bone_name:
+                if hasattr(bone, 'bone_name') and bone.bone_name:
                     new_bone = new_group.bones.add()
                     new_bone.bone_name = bone.bone_name
             
@@ -105,7 +105,8 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
         secondary_animation_dst.collider_groups.clear()
         for collider_group in secondary_animation_src.collider_groups:
             new_group = secondary_animation_dst.collider_groups.add()
-            new_group.node.bone_name = collider_group.node.bone_name
+            if hasattr(collider_group, 'node') and hasattr(collider_group.node, 'bone_name'):
+                new_group.node.bone_name = collider_group.node.bone_name
             new_group.uuid = collider_group.uuid
             
             # コライダーのコピー
@@ -177,12 +178,12 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
         human_bone_name_to_human_bone_dst = human_bones_dst.human_bone_name_to_human_bone()
         
         for bone_name, human_bone_src in human_bone_name_to_human_bone_src.items():
-            if human_bone_src.node.bone_name:
+            if hasattr(human_bone_src, 'node') and hasattr(human_bone_src.node, 'bone_name') and human_bone_src.node.bone_name:
                 original_bone = human_bone_src.node.bone_name
                 human_bone_dst = human_bone_name_to_human_bone_dst.get(bone_name)
-                
+
                 # 同じ名前のボーンがRigifyリグに存在するか確認
-                if human_bone_dst and original_bone in armature_rig.bones:
+                if human_bone_dst and hasattr(human_bone_dst, 'node') and original_bone in armature_rig.bones:
                     human_bone_dst.node.bone_name = original_bone
     except Exception as e:
         print(f"Error while updating VRM1 bone mapping: {e}")
@@ -298,7 +299,7 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
             new_collider.uuid = collider.uuid
             
             # ノード（ボーン）情報のコピー
-            if collider.node.bone_name:
+            if hasattr(collider, 'node') and hasattr(collider.node, 'bone_name') and collider.node.bone_name:
                 new_collider.node.bone_name = collider.node.bone_name
             
             # シェイプ情報のコピー
@@ -375,13 +376,13 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
             new_spring.vrm_name = spring.vrm_name
             
             # 中心ボーン情報のコピー
-            if spring.center.bone_name:
+            if hasattr(spring, 'center') and hasattr(spring.center, 'bone_name') and spring.center.bone_name:
                 new_spring.center.bone_name = spring.center.bone_name
             
             # ジョイント（ボーン）情報のコピー
             for joint in spring.joints:
                 new_joint = new_spring.joints.add()
-                if joint.node.bone_name:
+                if hasattr(joint, 'node') and hasattr(joint.node, 'bone_name') and joint.node.bone_name:
                     new_joint.node.bone_name = joint.node.bone_name
                 new_joint.hit_radius = joint.hit_radius
                 new_joint.stiffness = joint.stiffness

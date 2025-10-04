@@ -267,11 +267,17 @@ def mapping_metarig_and_vrm_model_bones(
         if bone_type in ["last_bone_names", "initial_automatic_bone_assignment"]:
             continue
 
-        metarig_bone = getattr(metarig_human_bones, bone_type).node
-        vrm_bone = getattr(vrm_human_bones, bone_type).node
+        metarig_bone_attr = getattr(metarig_human_bones, bone_type, None)
+        vrm_bone_attr = getattr(vrm_human_bones, bone_type, None)
 
-        if vrm_bone.bone_name:
-            bone_mapping.append((metarig_bone.bone_name, vrm_bone.bone_name))
+        if (
+            hasattr(metarig_bone_attr, "node") and
+            hasattr(vrm_bone_attr, "node")
+        ):
+            metarig_bone = metarig_bone_attr.node
+            vrm_bone = vrm_bone_attr.node
+            if hasattr(vrm_bone, "bone_name") and vrm_bone.bone_name:
+                bone_mapping.append((metarig_bone.bone_name, vrm_bone.bone_name))
 
     return bone_mapping
 
