@@ -722,12 +722,31 @@ def show_ik_toggle_pole(rig_object: bpy.types.Object):
 
     target_bone_name = "upper_arm_ik_target"  # IKターゲットボーン名
 
+    # 選択するボーン名を収集
+    bones_to_select = []
+
     # 左右の腕のIKポールベクトルを表示
     for name_LR in name_LRs:
         if rig_object.pose.bones[chk_bone_name + name_LR][toggle_pole_key] == False:
             rig_object.pose.bones[chk_bone_name + name_LR][toggle_pole_key] = True
-            rig_object.pose.bones[target_bone_name + name_LR].bone.select = True
+            bones_to_select.append(target_bone_name + name_LR)
             rig_object.pose.bones[target_bone_name + name_LR].bone.hide = False
+
+    # ボーン選択（バージョン分岐）
+    # Blender 5.0でBone.selectが削除されたため、バージョンによって処理を分ける
+    if bones_to_select:
+        if blender_version() >= 5:
+            # Blender 5.0以降: Edit Modeでedit_bonesを使って選択
+            current_mode = bpy.context.object.mode
+            bpy.ops.object.mode_set(mode='EDIT')
+            for bone_name in bones_to_select:
+                if bone_name in rig_object.data.edit_bones:
+                    rig_object.data.edit_bones[bone_name].select = True
+            bpy.ops.object.mode_set(mode=current_mode)
+        else:
+            # Blender 4.x: 従来通りbone.selectを使用
+            for bone_name in bones_to_select:
+                rig_object.pose.bones[bone_name].bone.select = True
 
 
 def update_vertex_groups_to_original_names(mesh_object, bone_name_mapping):

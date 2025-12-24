@@ -7,7 +7,7 @@
 bl_info = {
     "name": "VrmRigifyForUnity",
     "author": "CatHut",
-    "version": (1, 0, 0),  # Version updated to reflect new feature
+    "version": (1, 0, 2),  # Version updated to reflect new feature
     "blender": (4, 3, 0),
     "location": "View3D > Sidebar > VRM",
     "description": "Generate and modify RigifyRig from VRM model for Unity",
