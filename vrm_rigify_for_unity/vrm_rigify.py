@@ -759,20 +759,11 @@ def update_vertex_groups_to_original_names(mesh_object, bone_name_mapping):
     """
     if bone_name_mapping is None:
         return
-        
-    # 頂点グループのリネーム（一時的な名前を使用して衝突を避ける）
     for vg in mesh_object.vertex_groups:
         if vg.name in bone_name_mapping:
-            # 一時的な名前に変更（衝突を避けるためにプレフィックスを追加）
-            temp_name = "TEMP_" + vg.name
-            vg.name = temp_name
-
-    # 一時的な名前からオリジナルの名前に変更
-    for vg in mesh_object.vertex_groups:
-        if vg.name.startswith("TEMP_"):
-            original_name = vg.name[5:]  # "TEMP_" を削除
-            if original_name in bone_name_mapping:
-                vg.name = bone_name_mapping[original_name]
+            vg.name = bone_name_mapping[vg.name]
+    return
+    
 
 
 def copy_meshes_between_armatures(vrm_object, rig_object, bone_name_mapping=None):
