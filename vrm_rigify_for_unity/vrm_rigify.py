@@ -752,27 +752,30 @@ def show_ik_toggle_pole(rig_object: bpy.types.Object):
 def update_vertex_groups_to_original_names(mesh_object, bone_name_mapping):
     """
     メッシュの頂点グループ名をオリジナルのボーン名に更新する関数
-    
+
     Args:
         mesh_object: 更新するメッシュオブジェクト
         bone_name_mapping: 標準化されたボーン名からオリジナルボーン名へのマッピング辞書
     """
     if bone_name_mapping is None:
         return
-        
+
+    # 名前の衝突を避けるため、元の名前とハッシュ値を記録
+    temp_mapping = {}  # {一時的な名前: (元の標準化名, ターゲット名)}
+
     # 頂点グループのリネーム（一時的な名前を使用して衝突を避ける）
     for vg in mesh_object.vertex_groups:
         if vg.name in bone_name_mapping:
-            # 一時的な名前に変更（衝突を避けるためにプレフィックスを追加）
-            temp_name = "TEMP_" + vg.name
+            # 64文字制限を考慮した短い一時名を生成（ハッシュ値を使用）
+            temp_name = f"_TMP_{hash(vg.name) % 1000000:06d}"
+            temp_mapping[temp_name] = (vg.name, bone_name_mapping[vg.name])
             vg.name = temp_name
 
     # 一時的な名前からオリジナルの名前に変更
     for vg in mesh_object.vertex_groups:
-        if vg.name.startswith("TEMP_"):
-            original_name = vg.name[5:]  # "TEMP_" を削除
-            if original_name in bone_name_mapping:
-                vg.name = bone_name_mapping[original_name]
+        if vg.name in temp_mapping:
+            _, target_name = temp_mapping[vg.name]
+            vg.name = target_name
 
 
 def copy_meshes_between_armatures(vrm_object, rig_object, bone_name_mapping=None):
