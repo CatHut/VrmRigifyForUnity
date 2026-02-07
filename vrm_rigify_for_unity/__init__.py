@@ -190,7 +190,7 @@ class VRM_OT_ToggleConstraintDrivers(Operator):
         armature = context.active_object
         
         if self.mode == "ADD":
-            result = setup_constraint_drivers.setup_rig_constraint_drivers(armature)
+            result = constraint_driver_utils.add_constraint_influence_drivers(armature)
             if result:
                 self.report({'INFO'}, "Constraint drivers added successfully")
             else:
