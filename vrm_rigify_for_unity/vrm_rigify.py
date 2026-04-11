@@ -636,6 +636,10 @@ def  modify_rigify_rig_eyes_control_bones(rig_object):
 
     with ModeContext.editing(rig_object):
         # 目のマスターコントロールと左目のボーンの位置を取得
+        eye_l_bone      = rig_object.data.edit_bones.get("eye.L")
+        master_eye_bone = rig_object.data.edit_bones.get("master_eye.L")
+        mch_eye_bone    = rig_object.data.edit_bones.get("MCH-eye.L")
+
         for rig_bone in rig_object.data.edit_bones:
             if rig_bone.name == "master_eye.L":
                 m_head_x1, m_head_y1, m_head_z1 = obj.matrix_world @ rig_bone.head
@@ -647,14 +651,25 @@ def  modify_rigify_rig_eyes_control_bones(rig_object):
                 e_head_length = rig_bone.length
                 continue
 
+        if eye_l_bone:
+            print(f"[eye pos debug] eye.L local:      head=({eye_l_bone.head.x:.4f}, {eye_l_bone.head.y:.4f}, {eye_l_bone.head.z:.4f})")
+        if mch_eye_bone:
+            print(f"[eye pos debug] MCH-eye.L local:  head y={mch_eye_bone.head.y:.4f}")
+        else:
+            print("[eye pos debug] MCH-eye.L: not found")
+        if master_eye_bone:
+            print(f"[eye pos debug] master_eye.L local head y={master_eye_bone.head.y:.4f}")
+        else:
+            print("[eye pos debug] master_eye.L: not found")
+
         # X軸方向の位置計算（傾き計算、分母が0の場合は例外処理）
-        x_a = ((m_tail_y2-m_head_y1) / (m_tail_x2-m_head_x1) 
+        x_a = ((m_tail_y2-m_head_y1) / (m_tail_x2-m_head_x1)
                 if m_tail_x2 - m_head_x1 != 0 else 0)
         x_b = m_head_y1 - x_a * m_head_x1
         x_position = (e_head_y3-x_b) / x_a if x_a != 0 else m_head_x1
 
         # Z軸方向の位置計算
-        z_a = ((m_tail_y2-m_head_y1) / (m_tail_z2-m_head_z1) 
+        z_a = ((m_tail_y2-m_head_y1) / (m_tail_z2-m_head_z1)
                 if m_tail_z2 - m_head_z1 != 0 else 0)
         z_b = m_head_y1 - z_a * m_head_z1
         z_position = (e_head_y3-z_b) / z_a if z_a != 0 else m_head_z1
@@ -677,14 +692,15 @@ def  modify_rigify_rig_eyes_control_bones(rig_object):
                 rig_bone.tail.x = -x_position
                 rig_bone.tail.z =  z_position + e_head_length
                 continue
-            
+
         # 目全体のコントロールボーンの調整（計算可能な場合のみ）
-        if x_a != 0: 
+        if x_a != 0:
             for rig_bone in rig_object.data.edit_bones:
                 if rig_bone.name == "eyes":
                     rig_bone.head.z = z_position
                     rig_bone.tail.z = z_position + e_head_length
                     rig_bone.length = rig_bone.length * scale_ratio * 1.35
+                    print(f"[eye pos debug] eyes after: head=({rig_bone.head.x:.4f}, {rig_bone.head.y:.4f}, {rig_bone.head.z:.4f})")
                     break
 
 #endregion
@@ -1084,4 +1100,74 @@ def debug_attach_unmapped_bones(rig_object, vrm_object, bone_name_mapping):
                     
     print("\n==== END OF ATTACH UNMAPPED BONES DEBUG ====\n")
 
+
+def debug_eye_constraints(rig_object):
+    """
+    目のボーン（LeftEye/RightEye）および関連するMCH/ORGボーンの
+    コンストレイント設定状況をログに出力するデバッグ関数
+
+    Args:
+        rig_object: Rigifyリグオブジェクト
+    """
+    print("\n==== [eye constraints debug] ====")
+
+    eye_related_patterns = ["eye", "Eye"]
+
+    for bone in rig_object.pose.bones:
+        if not any(p in bone.name for p in eye_related_patterns):
+            continue
+
+        collections = [c.name for c in bone.bone.collections] if bone.bone.collections else []
+        print(f"  [{bone.name}]  collections={collections}")
+
+        if not bone.constraints:
+            print(f"    (no constraints)")
+            continue
+
+        for c in bone.constraints:
+            info = f"    constraint: {c.type}  name='{c.name}'  influence={c.influence:.3f}  mute={c.mute}"
+            if hasattr(c, 'subtarget') and c.subtarget:
+                info += f"  subtarget='{c.subtarget}'"
+            elif hasattr(c, 'target') and c.target:
+                info += f"  target='{c.target.name}'"
+            anim_data = rig_object.animation_data
+            has_driver = False
+            if anim_data and anim_data.drivers:
+                bone_path = f'pose.bones["{bone.name}"].constraints["{c.name}"].influence'
+                has_driver = any(d.data_path == bone_path for d in anim_data.drivers)
+            info += f"  driver={has_driver}"
+            print(info)
+
+    print("==== [eye constraints debug] end ====\n")
+
+
+def debug_shape_key_drivers(rig_object):
+    """
+    rig_object の子メッシュのシェイプキードライバをすべてログ出力する関数
+
+    Args:
+        rig_object: Rigifyリグオブジェクト
+    """
+    print("\n==== [shape key drivers debug] ====")
+
+    for child in rig_object.children:
+        if child.type != 'MESH':
+            continue
+        if not child.data.shape_keys:
+            continue
+        anim_data = child.data.shape_keys.animation_data
+        if not anim_data or not anim_data.drivers:
+            print(f"  [{child.name}] no shape key drivers")
+            continue
+
+        print(f"  [{child.name}]")
+        for fcurve in anim_data.drivers:
+            driver = fcurve.driver
+            print(f"    data_path='{fcurve.data_path}'  type={driver.type}  expr='{driver.expression}'")
+            for var in driver.variables:
+                for t in var.targets:
+                    target_name = t.id.name if t.id else "None"
+                    print(f"      var='{var.name}'  target='{target_name}'  data_path='{t.data_path}'")
+
+    print("==== [shape key drivers debug] end ====\n")
 
