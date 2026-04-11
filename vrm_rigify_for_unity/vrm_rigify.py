@@ -411,6 +411,57 @@ def remove_unmapped_spine_bones(metarig: bpy.types.Object, bone_mapping) -> list
     return new_bone_mapping
 
 
+def set_metarig_spine_neck_pos(metarig: bpy.types.Object, bone_mapping: list, vrm_object: bpy.types.Object = None):
+    """
+    super_head チェーンの use_connect を修正する関数
+
+    position_metarig_bones_to_vrm_model で head/tail を直接書き換えると
+    use_connect が False になる。connected_children_names は use_connect=True
+    のボーンしか辿らないため、super_head が spine.004(Head) を認識できず
+    has_neck=False になってしまう。
+
+    ここで spine.003 以降のボーンを use_connect=True にし直したうえで、
+    VRM の位置に合わせて tail を再設定する。
+
+    Args:
+        metarig: Rigifyのメタリグオブジェクト
+        bone_mapping: ボーンマッピングのリスト（remove_unmapped_spine_bones 後）
+        vrm_object: VRMモデルのアーマチュアオブジェクト（tail 再設定用）
+    """
+    import re as _re
+    spine_entries = [(mb, vb) for mb, vb in bone_mapping if _re.match(r"^spine(\.\d+)?$", mb)]
+
+    # Neck に対応するメタリグボーンのインデックスを取得
+    neck_idx = None
+    for i, (mb, vb) in enumerate(spine_entries):
+        if vb.lower() == "neck":
+            neck_idx = i
+            break
+
+    if neck_idx is None:
+        return
+
+    # neck より後（Head以降）のボーンを use_connect=True にする。
+    # neck 自体（spine.003）は basic_spine チェーンから切り離すため False のまま。
+    # Head を use_connect=True にすることで super_head が
+    # connected_children_names で Head を認識し has_neck=True になる。
+    with ModeContext.editing(metarig):
+        armature_metarig = metarig.data
+        armature_vrm = vrm_object.data if vrm_object else None
+
+        for i in range(neck_idx + 1, len(spine_entries)):
+            mb, vb = spine_entries[i]
+            bone = armature_metarig.edit_bones.get(mb)
+            if bone is None:
+                continue
+
+            bone.use_connect = True  # head が親の tail にスナップされる
+
+            # tail を VRM の値に再設定
+            if armature_vrm and vb in armature_vrm.bones:
+                bone.tail = armature_vrm.bones[vb].tail_local
+
+
 def position_metarig_bones_to_vrm_model(
         metarig: bpy.types.Object, vrm_object: bpy.types.Object, bone_mapping):
     """
@@ -553,10 +604,10 @@ def modify_metarig_arm_hand_finger_rotation(metarig: bpy.types.Object):
 def generate_rigify_rig(metarig: bpy.types.Object) -> bpy.types.Object:
     """
     メタリグからRigifyリグを生成する関数
-    
+
     Args:
         metarig: Rigifyのメタリグオブジェクト
-        
+
     Returns:
         生成されたRigifyリグオブジェクト
     """
@@ -597,13 +648,13 @@ def removed_rigify_rig_facial_bones(rig_object: bpy.types.Object):
         for bone_root in matche_objects_by_name_patterns(
             armature_rig.edit_bones, rig_bones_to_delete_by_name_pattern):
 
-            for bone in bone_root.children_recursive + [bone_root]:
+            descendants = bone_root.children_recursive
+            for bone in descendants + [bone_root]:
                 if bone not in bones_to_remove:
                     bones_to_remove.append(bone)
 
         # ボーンを削除
         for bone in bones_to_remove:
-            # print(f"deleting facial bone '{get_full_bone_path(bone)}'")
             armature_rig.edit_bones.remove(bone)
 
 
@@ -620,31 +671,9 @@ def rename_rig_bones_to_match_vrm_model_vertex_groups(
     armature_rig: bpy.types.Armature = rig_object.data
 
     with ModeContext.editing(rig_object):
-        # デバッグ: spine 系 DEF/ORG ボーンを全列挙
-        print("==== DEBUG: spine-related bones in rig ====")
-        for bone in sorted(armature_rig.edit_bones, key=lambda b: b.name):
-            if re.match(r"^(DEF|ORG|MCH)-spine", bone.name):
-                print(f"  {bone.name}  use_deform={bone.use_deform}  parent={bone.parent.name if bone.parent else None}")
-        print("==== DEBUG: bone_mapping (spine entries) ====")
-        for mb, vb in bone_mapping:
-            if re.match(r"^spine(\.\d+)?$", mb):
-                print(f"  metarig={mb}  vrm={vb}")
-        print("==== END DEBUG ====")
-
-        # spine チェーン末尾のボーン名を特定（Rigify は DEF- を生成しない）
-        spine_entries = [
-            mb for mb, vb in bone_mapping
-            if re.match(r"^spine(\.\d+)?$", mb)
-        ]
-        spine_tail_bone = spine_entries[-1] if spine_entries else None
-
         for metarig_bone_name, vrm_bone_name in bone_mapping:
             # 目のボーンは特別処理（ORGプレフィックスを使用）
             if metarig_bone_name in ["eye.L", "eye.R"]:
-                rig_bone = armature_rig.edit_bones[f"ORG-{metarig_bone_name}"]
-                rig_bone.use_deform = True
-            elif metarig_bone_name == spine_tail_bone:
-                # spine チェーン末尾（head相当）は Rigify が DEF- を生成しないため ORG- を使用
                 rig_bone = armature_rig.edit_bones[f"ORG-{metarig_bone_name}"]
                 rig_bone.use_deform = True
             else:
@@ -657,7 +686,6 @@ def rename_rig_bones_to_match_vrm_model_vertex_groups(
             if bone_name_mapping and vrm_bone_name in bone_name_mapping:
                 target_name = bone_name_mapping[vrm_bone_name]
 
-            print(f"renaming bone '{get_full_bone_path(rig_bone)}' to '{target_name}'")
             rig_bone.name = target_name
 
         # Special handling: if a bone exactly matches "root", rename it to "Root"
@@ -710,7 +738,6 @@ def attach_unmapped_vrm_model_bones_to_rig(
                     continue
 
                 parent_bone_in_rig = armature_rig.edit_bones[parent_original_name]
-                print(f"generating bone '{get_full_bone_path(parent_bone_in_rig)}/{original_name}'")
 
                 bone_in_rig = armature_rig.edit_bones.new(original_name)
                 bone_in_rig.head = vrm_bone.head_local

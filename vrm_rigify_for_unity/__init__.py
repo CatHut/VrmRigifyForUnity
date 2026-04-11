@@ -109,9 +109,6 @@ class VRM_OT_ToRigify(Operator):
             bone_name_mapping = vrm_rigify.update_bone_name_mapping_after_rename(
                 vrm_object, original_bone_names)
             
-            # debug
-            vrm_rigify.debug_bone_name_mapping(original_bone_names, bone_name_mapping, vrm_object)
-            
             # メタリグを生成
             metarig_name = f"{vrm_object.name}.metarig"
             metarig = vrm_rigify.generate_template_metarig(metarig_name)
@@ -130,15 +127,15 @@ class VRM_OT_ToRigify(Operator):
             # 位置合わせ完了後に未マッピングの spine.* を削除（Rigify生成前）
             bone_mapping = vrm_rigify.remove_unmapped_spine_bones(metarig, bone_mapping)
 
+            # spine の use_connect を修正（Rigify生成前）
+            vrm_rigify.set_metarig_spine_neck_pos(metarig, bone_mapping, vrm_object)
+
             # Rigifyリグを生成
             rig_object = vrm_rigify.generate_rigify_rig(metarig)
             
             # リグの処理と調整
             vrm_rigify.removed_rigify_rig_facial_bones(rig_object)
             vrm_rigify.rename_rig_bones_to_match_vrm_model_vertex_groups(rig_object, bone_mapping, bone_name_mapping)
-
-            # debug
-            vrm_rigify.debug_attach_unmapped_bones(rig_object, vrm_object, bone_name_mapping)
 
             vrm_rigify.attach_unmapped_vrm_model_bones_to_rig(rig_object, vrm_object, bone_name_mapping)
             vrm_rigify.copy_shape_key_controls_from_vrm_armature(rig_object, vrm_object)
