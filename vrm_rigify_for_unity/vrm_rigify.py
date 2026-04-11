@@ -794,57 +794,59 @@ def  modify_rigify_rig_eyes_control_bones(rig_object):
     obj = bpy.context.object
 
     with ModeContext.editing(rig_object):
-        # 目のマスターコントロールと左目のボーンの位置を取得
+        eye_l_bone      = rig_object.data.edit_bones.get("eye.L")
+        master_eye_bone = rig_object.data.edit_bones.get("master_eye.L")
+        mch_eye_bone    = rig_object.data.edit_bones.get("MCH-eye.L")
+        if eye_l_bone is None:
+            return
+
+        eye_local_x = eye_l_bone.head.x
+        eye_local_z = eye_l_bone.head.z
+        eye_length  = eye_l_bone.length
+
+        # eyes コントロールは眼球（MCH-eye.L）より前方（Yマイナス）に置く必要がある。
+        # master_eye.L のY座標がRigify生成時の適切な前方位置を示しているため、
+        # eye.L / eye.R のコントローラY位置には master_eye.L を使う。
+        # master_eye.L がない場合は MCH-eye.L、それもなければ eye.L のY座標を使う。
+        if master_eye_bone:
+            controller_y = master_eye_bone.head.y
+        elif mch_eye_bone:
+            controller_y = mch_eye_bone.head.y
+        else:
+            controller_y = eye_l_bone.head.y
+
+        print(f"[eye pos debug] eye.L local:      head=({eye_local_x:.4f}, {eye_l_bone.head.y:.4f}, {eye_local_z:.4f})")
+        print(f"[eye pos debug] MCH-eye.L local:  head y={mch_eye_bone.head.y:.4f}" if mch_eye_bone else "[eye pos debug] MCH-eye.L: not found")
+        print(f"[eye pos debug] master_eye.L local head y={master_eye_bone.head.y:.4f}" if master_eye_bone else "[eye pos debug] master_eye.L: not found")
+        print(f"[eye pos debug] controller_y={controller_y:.4f}")
+
+        # 左右の目ボーン（コントローラ）の位置調整
+        # eye.L/R のY位置はVRMモデルの目の位置（eye_local_y）のまま維持し、
+        # X/Z のみ調整する。use_connect を True に戻して eyes との接続を保持する。
         for rig_bone in rig_object.data.edit_bones:
-            if rig_bone.name == "master_eye.L":
-                m_head_x1, m_head_y1, m_head_z1 = obj.matrix_world @ rig_bone.head
-                m_tail_x2, m_tail_y2, m_tail_z2 = obj.matrix_world @ rig_bone.tail
-                continue
-
             if rig_bone.name == "eye.L":
-                e_head_x3, e_head_y3, head_z3 = obj.matrix_world @ rig_bone.head
-                e_head_length = rig_bone.length
-                continue
-
-        # X軸方向の位置計算（傾き計算、分母が0の場合は例外処理）
-        x_a = ((m_tail_y2-m_head_y1) / (m_tail_x2-m_head_x1) 
-                if m_tail_x2 - m_head_x1 != 0 else 0)
-        x_b = m_head_y1 - x_a * m_head_x1
-        x_position = (e_head_y3-x_b) / x_a if x_a != 0 else m_head_x1
-
-        # Z軸方向の位置計算
-        z_a = ((m_tail_y2-m_head_y1) / (m_tail_z2-m_head_z1) 
-                if m_tail_z2 - m_head_z1 != 0 else 0)
-        z_b = m_head_y1 - z_a * m_head_z1
-        z_position = (e_head_y3-z_b) / z_a if z_a != 0 else m_head_z1
-
-        # スケール比率の計算
-        scale_ratio = (x_position-e_head_x3) / e_head_x3
-
-        # 左右の目ボーンの位置調整
-        for rig_bone in rig_object.data.edit_bones:
-            if rig_bone.name == "eye.L":
-                rig_bone.head.x = x_position
-                rig_bone.head.z = z_position
-                rig_bone.tail.x = x_position
-                rig_bone.tail.z = z_position + e_head_length
+                rig_bone.head.x = eye_local_x
+                rig_bone.head.z = eye_local_z
+                rig_bone.tail.x = eye_local_x
+                rig_bone.tail.z = eye_local_z + eye_length
+                rig_bone.use_connect = True
                 continue
 
             if rig_bone.name == "eye.R":
-                rig_bone.head.x = -x_position  # 右目は左目の反転位置
-                rig_bone.head.z =  z_position
-                rig_bone.tail.x = -x_position
-                rig_bone.tail.z =  z_position + e_head_length
+                rig_bone.head.x = -eye_local_x
+                rig_bone.head.z = eye_local_z
+                rig_bone.tail.x = -eye_local_x
+                rig_bone.tail.z = eye_local_z + eye_length
+                rig_bone.use_connect = True
                 continue
-            
-        # 目全体のコントロールボーンの調整（計算可能な場合のみ）
-        if x_a != 0: 
-            for rig_bone in rig_object.data.edit_bones:
-                if rig_bone.name == "eyes":
-                    rig_bone.head.z = z_position
-                    rig_bone.tail.z = z_position + e_head_length
-                    rig_bone.length = rig_bone.length * scale_ratio * 1.35
-                    break
+
+        # eyes コントロールボーンのZ位置を eye.L に合わせ、Y位置は前方（controller_y）を維持
+        for rig_bone in rig_object.data.edit_bones:
+            if rig_bone.name == "eyes":
+                rig_bone.head.z = eye_local_z
+                rig_bone.tail.z = eye_local_z + eye_length
+                print(f"[eye pos debug] eyes after: head=({rig_bone.head.x:.4f}, {rig_bone.head.y:.4f}, {rig_bone.head.z:.4f})")
+                break
 
 #endregion
 
@@ -977,78 +979,94 @@ def change_meshes_modifier_object(rig_object):
                     modifier.object = bpy.data.objects.get(rig_object.name)
 
 
-def adjust_bone_hierarchy_and_constraints_for_Unity(rig_object):
+def adjust_bone_hierarchy_and_constraints_for_Unity(rig_object, bone_mapping=None, bone_name_mapping=None):
     """
     Unity向けにRigifyモデルのボーン階層と制約を調整する関数
-    
+
     Args:
         rig_object: Rigifyリグオブジェクト
+        bone_mapping: (メタリグボーン名, VRM標準ボーン名) のリスト
+        bone_name_mapping: VRM標準ボーン名 → オリジナルボーン名 のマッピング辞書
     """
     armature_data = rig_object.data
     if not isinstance(armature_data, bpy.types.Armature):
         return
 
+    # bone_mapping から VRM標準ボーン名 -> リグ上の実際のボーン名 を解決するヘルパー
+    def resolve(vrm_std_name):
+        """VRM標準ボーン名をリグ上の実際のボーン名に変換する"""
+        return bone_name_mapping.get(vrm_std_name, vrm_std_name) if bone_name_mapping else vrm_std_name
+
+    # VRM標準ボーン名 -> リグ上の実際のボーン名 の逆引き辞書を構築
+    # bone_mapping: (metarig_bone_name, vrm_std_name) のリスト
+    vrm_std_to_rig = {}
+    if bone_mapping:
+        for _mb, vrm_std in bone_mapping:
+            vrm_std_to_rig[vrm_std] = resolve(vrm_std)
+
     with ModeContext.editing(rig_object):
         # 親子関係の調整
-        parent_adjustments = {
-            "J_Bip_R_Shoulder": "J_Bip_C_UpperChest",
-            "J_Bip_L_Shoulder": "J_Bip_C_UpperChest",
-            "J_Bip_L_UpperArm": "J_Bip_L_Shoulder",
-            "J_Bip_R_UpperArm": "J_Bip_R_Shoulder",
-            "J_Bip_R_UpperLeg": "J_Bip_C_Hips",
-            "J_Bip_L_UpperLeg": "J_Bip_C_Hips",
+        # VRM Humanoidボーン名のペア (子, 親) で定義し、実際のボーン名に解決してから設定する
+        parent_adjustments_vrm = [
+            ("rightShoulder",  "upperChest"),
+            ("leftShoulder",   "upperChest"),
+            ("leftUpperArm",   "leftShoulder"),
+            ("rightUpperArm",  "rightShoulder"),
+            ("rightUpperLeg",  "hips"),
+            ("leftUpperLeg",   "hips"),
+        ]
+
+        # 指ボーンの親子関係（VRM Humanoid名で定義）
+        finger_vrm_names = {
+            'Right': ["rightThumbProximal", "rightIndexProximal", "rightMiddleProximal",
+                      "rightRingProximal",  "rightLittleProximal"],
+            'Left':  ["leftThumbProximal",  "leftIndexProximal",  "leftMiddleProximal",
+                      "leftRingProximal",   "leftLittleProximal"],
         }
+        finger_parent_vrm = {"Right": "rightHand", "Left": "leftHand"}
 
-        fingers_dict = {
-            'R': ["Thumb1", "Index1", "Middle1", "Ring1", "Little1"],
-            'L': ["Thumb1", "Index1", "Middle1", "Ring1", "Little1"]
-        }
+        for side, finger_names in finger_vrm_names.items():
+            for finger_vrm in finger_names:
+                parent_adjustments_vrm.append((finger_vrm, finger_parent_vrm[side]))
 
-        # 手の指ボーンの親子関係調整
-        for side, fingers in fingers_dict.items():
-            for finger in fingers:
-                bone_name = f"J_Bip_{side}_{finger}"
-                parent_adjustments[bone_name] = f"J_Bip_{side}_Hand"
+        # 実際のボーン名に解決して親子関係を設定
+        for child_vrm, parent_vrm in parent_adjustments_vrm:
+            child_name  = vrm_std_to_rig.get(child_vrm,  resolve(child_vrm))
+            parent_name = vrm_std_to_rig.get(parent_vrm, resolve(parent_vrm))
+            if child_name in armature_data.edit_bones and parent_name in armature_data.edit_bones:
+                armature_data.edit_bones[child_name].parent = armature_data.edit_bones[parent_name]
 
-        # 親子関係の設定
-        for bone_name, parent_name in parent_adjustments.items():
-            if bone_name in armature_data.edit_bones and parent_name in armature_data.edit_bones:
-                armature_data.edit_bones[bone_name].parent = armature_data.edit_bones[parent_name]
-
-        # 目のボーンの調整
-        eye_bone_adjustments = {
-            "J_Adj_L_FaceEye": {"parent": "J_Bip_C_Head", "target": "MCH-eye.L"},
-            "J_Adj_R_FaceEye": {"parent": "J_Bip_C_Head", "target": "MCH-eye.R"}
-        }
-
-        for bone_name, adjustment in eye_bone_adjustments.items():
-            if bone_name not in armature_data.edit_bones:
-                continue
-
-            # 親の設定
-            if adjustment['parent'] in armature_data.edit_bones:
-                armature_data.edit_bones[bone_name].parent = armature_data.edit_bones[adjustment['parent']]
-
-    # ボーンコレクションと制約の設定（ポーズモードで行う）
+    # 目のボーンにコンストレイントを設定（ポーズモードで行う）
+    # bone_mappingからVRMのHumanoidに設定されている目のボーン名を取得する
     bpy.ops.object.mode_set(mode='POSE')
-    
-    for bone_name, adjustment in eye_bone_adjustments.items():
-        pose_bone = rig_object.pose.bones.get(bone_name)
+
+    # eye.L / eye.R に対応するリグ上のボーン名を bone_mapping から解決する
+    eye_entries = []  # [(rig_bone_name, mch_target_name), ...]
+    if bone_mapping:
+        for metarig_bone_name, vrm_bone_name in bone_mapping:
+            if metarig_bone_name not in ["eye.L", "eye.R"]:
+                continue
+            # リネーム後のボーン名を解決（bone_name_mapping があればそちらを優先）
+            actual_name = bone_name_mapping.get(vrm_bone_name, vrm_bone_name) if bone_name_mapping else vrm_bone_name
+            mch_target = "MCH-eye.L" if metarig_bone_name == "eye.L" else "MCH-eye.R"
+            eye_entries.append((actual_name, mch_target))
+
+    for rig_bone_name, mch_target in eye_entries:
+        pose_bone = rig_object.pose.bones.get(rig_bone_name)
         if not pose_bone:
             continue
 
-        # DEFコレクションに追加
-        for collection in rig_object.data.collections:
-            if collection.name == "DEF":
-                collection.assign(rig_object.data.bones[bone_name])
-                break
+        # MCH-eye.L/R が存在する場合のみコンストレイントを追加
+        if mch_target not in rig_object.pose.bones:
+            continue
 
-        # トランスフォームコピー制約の追加
-        target_bone = adjustment['target']
-        if target_bone in rig_object.pose.bones:
-            constraint = pose_bone.constraints.new('COPY_TRANSFORMS')
-            constraint.target = rig_object
-            constraint.subtarget = target_bone
+        # すでにコンストレイントがある場合はスキップ
+        if any(c.type == 'COPY_TRANSFORMS' for c in pose_bone.constraints):
+            continue
+
+        constraint = pose_bone.constraints.new('COPY_TRANSFORMS')
+        constraint.target = rig_object
+        constraint.subtarget = mch_target
 
     bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -1242,5 +1260,79 @@ def debug_attach_unmapped_bones(rig_object, vrm_object, bone_name_mapping):
                     print(f"  - Not in mapping")
                     
     print("\n==== END OF ATTACH UNMAPPED BONES DEBUG ====\n")
+
+
+def debug_eye_constraints(rig_object):
+    """
+    目のボーン（LeftEye/RightEye）および関連するMCH/ORGボーンの
+    コンストレイント設定状況をログに出力するデバッグ関数
+
+    Args:
+        rig_object: Rigifyリグオブジェクト
+    """
+    print("\n==== [eye constraints debug] ====")
+
+    eye_related_patterns = ["eye", "Eye"]
+
+    for bone in rig_object.pose.bones:
+        if not any(p in bone.name for p in eye_related_patterns):
+            continue
+
+        collections = [c.name for c in bone.bone.collections] if bone.bone.collections else []
+        print(f"  [{bone.name}]  collections={collections}")
+
+        if not bone.constraints:
+            print(f"    (no constraints)")
+            continue
+
+        for c in bone.constraints:
+            info = f"    constraint: {c.type}  name='{c.name}'  influence={c.influence:.3f}  mute={c.mute}"
+            # ターゲット情報を追加
+            if hasattr(c, 'subtarget') and c.subtarget:
+                info += f"  subtarget='{c.subtarget}'"
+            elif hasattr(c, 'target') and c.target:
+                info += f"  target='{c.target.name}'"
+            # ドライバの有無を確認
+            anim_data = rig_object.animation_data
+            has_driver = False
+            if anim_data and anim_data.drivers:
+                bone_path = f'pose.bones["{bone.name}"].constraints["{c.name}"].influence'
+                has_driver = any(d.data_path == bone_path for d in anim_data.drivers)
+            info += f"  driver={has_driver}"
+            print(info)
+
+    print("==== [eye constraints debug] end ====\n")
+
+
+def debug_shape_key_drivers(rig_object):
+    """
+    rig_object の子メッシュのシェイプキードライバをすべてログ出力する関数
+
+    Args:
+        rig_object: Rigifyリグオブジェクト
+    """
+    print("\n==== [shape key drivers debug] ====")
+
+    for child in rig_object.children:
+        if child.type != 'MESH':
+            continue
+        if not child.data.shape_keys:
+            continue
+        anim_data = child.data.shape_keys.animation_data
+        if not anim_data or not anim_data.drivers:
+            print(f"  [{child.name}] no shape key drivers")
+            continue
+
+        print(f"  [{child.name}]")
+        for fcurve in anim_data.drivers:
+            driver = fcurve.driver
+            print(f"    data_path='{fcurve.data_path}'  type={driver.type}  expr='{driver.expression}'")
+            for var in driver.variables:
+                for t in var.targets:
+                    target_name = t.id.name if t.id else "None"
+                    print(f"      var='{var.name}'  target='{target_name}'  data_path='{t.data_path}'")
+
+    print("==== [shape key drivers debug] end ====\n")
+
 
 

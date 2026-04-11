@@ -150,7 +150,8 @@ class VRM_OT_ToRigify(Operator):
             vrm_rigify.change_meshes_modifier_object(rig_object)
 
             # 親子関係など最終調整
-            vrm_rigify.adjust_bone_hierarchy_and_constraints_for_Unity(rig_object)
+            vrm_rigify.adjust_bone_hierarchy_and_constraints_for_Unity(rig_object, bone_mapping, bone_name_mapping)
+            vrm_rigify.debug_eye_constraints(rig_object)
 
             # 元のArmatureのボーン名を元に戻す
             vrm_rigify.restore_original_bone_names(vrm_object, original_bone_names)
@@ -164,8 +165,9 @@ class VRM_OT_ToRigify(Operator):
                 # VRM拡張情報のコピー（新機能）
                 from . import vrm_extension_utils
                 vrm_extension_utils.copy_vrm_extension_from_armature(vrm_object, rig_object)
-    
-            
+
+            vrm_rigify.debug_shape_key_drivers(rig_object)
+
             # オブジェクトの表示設定（リクエストに応じて非表示）
             if self.hide_metarig:
                 metarig.hide_set(True)
