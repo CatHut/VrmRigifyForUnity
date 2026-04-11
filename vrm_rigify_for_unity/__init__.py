@@ -17,6 +17,10 @@ bl_info = {
 }
 
 import bpy
+import sys
+import io
+import os
+import datetime
 from bpy.types import Operator, Panel
 from bpy.props import BoolProperty, StringProperty, FloatProperty
 
@@ -68,7 +72,32 @@ class VRM_OT_ToRigify(Operator):
     def execute(self, context):
         # 現在のアクティブオブジェクト（VRMモデル）を取得
         vrm_object = context.active_object
-        
+
+        # ログファイルのパス（Blendファイルと同じディレクトリ、未保存時はtmp）
+        blend_path = bpy.data.filepath
+        log_dir = os.path.dirname(blend_path) if blend_path else os.path.join(os.path.expanduser("~"), "tmp")
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = os.path.join(log_dir, f"vrm_rigify_{timestamp}.log")
+
+        # stdout を tee（コンソールとファイル両方に出力）
+        class _Tee(io.TextIOBase):
+            def __init__(self, original):
+                self._orig = original
+                self._file = open(log_path, "w", encoding="utf-8")
+            def write(self, s):
+                self._orig.write(s)
+                self._file.write(s)
+                return len(s)
+            def flush(self):
+                self._orig.flush()
+                self._file.flush()
+            def close(self):
+                self._file.close()
+
+        tee = _Tee(sys.stdout)
+        sys.stdout = tee
+
         try:
             # オリジナルのボーン名を保存
             original_bone_names = vrm_rigify.store_original_bone_names(vrm_object)
@@ -89,15 +118,18 @@ class VRM_OT_ToRigify(Operator):
             
             # ボーンのマッピングと位置合わせ
             bone_mapping = vrm_rigify.mapping_metarig_and_vrm_model_bones(metarig, vrm_object)
-            vrm_rigify.remove_or_log_unmapped_metarig_bones(metarig, bone_mapping)
+            bone_mapping = vrm_rigify.remove_or_log_unmapped_metarig_bones(metarig, bone_mapping)
             vrm_rigify.position_metarig_bones_to_vrm_model(metarig, vrm_object, bone_mapping)
-            
+
             # メタリグの調整
-            vrm_rigify.adjust_position_of_metarig_spine_bones(metarig)
+            vrm_rigify.adjust_position_of_metarig_spine_bones(metarig, bone_mapping)
             vrm_rigify.Modify_metarig_limb_rotation_axes(metarig)
             vrm_rigify.modify_metarig_arm_hand_finger_rotation(metarig)
             vrm_rigify.modify_metarig_limb_segments(metarig)
-            
+
+            # 位置合わせ完了後に未マッピングの spine.* を削除（Rigify生成前）
+            bone_mapping = vrm_rigify.remove_unmapped_spine_bones(metarig, bone_mapping)
+
             # Rigifyリグを生成
             rig_object = vrm_rigify.generate_rigify_rig(metarig)
             
@@ -158,12 +190,18 @@ class VRM_OT_ToRigify(Operator):
             rig_object.select_set(True)
             context.view_layer.objects.active = rig_object
             
-            self.report({'INFO'}, "VRM to Rigify conversion complete")
+            self.report({'INFO'}, f"VRM to Rigify conversion complete. Log: {log_path}")
             return {'FINISHED'}
-            
+
         except Exception as e:
+            import traceback
+            print(traceback.format_exc())
             self.report({'ERROR'}, f"Error: {str(e)}")
             return {'CANCELLED'}
+
+        finally:
+            sys.stdout = tee._orig
+            tee.close()
 
 
 #################################################

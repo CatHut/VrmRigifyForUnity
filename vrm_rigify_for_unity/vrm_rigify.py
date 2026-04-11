@@ -282,44 +282,133 @@ def mapping_metarig_and_vrm_model_bones(
     return bone_mapping
 
 
-def remove_or_log_unmapped_metarig_bones(metarig: bpy.types.Object, bone_mapping):
+def remove_or_log_unmapped_metarig_bones(metarig: bpy.types.Object, bone_mapping) -> list:
     """
-    VRMモデルにマッピングされていないメタリグのボーンを削除または記録する関数
-    
+    VRMモデルにマッピングされていないメタリグのボーンを削除する関数（第1段階）
+
+    位置合わせの前に呼ぶ。palm/pelvis/breast のみ削除する。
+    未マッピングの spine.* の削除は位置合わせ後に
+    remove_unmapped_spine_bones() で行う。
+
     Args:
         metarig: Rigifyのメタリグオブジェクト
-        bone_mapping: ボーンマッピングのリスト（mapping_metarig_and_vrm_model_bones関数の戻り値）
+        bone_mapping: ボーンマッピングのリスト
+
+    Returns:
+        bone_mapping（変更なし）
     """
-    # マッピングされているメタリグのボーン名のセット
-    mapped_metarig_bone_names = set(
-        [metarig_bone for metarig_bone, vrm_bone in bone_mapping])
     armature_metarig: bpy.types.Armature = metarig.data
 
     with ModeContext.editing(metarig):
         # palm（手のひら）ボーンを削除
         for metarig_bone in matche_objects_by_name_patterns(
                                     armature_metarig.edit_bones, [r"^palm.*$"]):
-            # print(f"removing: metarig palm bone'{metarig_bone.name}'")
             armature_metarig.edit_bones.remove(metarig_bone)
-        
-        # その他のボーンを処理（未マッピングのものは削除またはログ）
-        for metarig_bone in armature_metarig.edit_bones:
+
+        # pelvis / breast ボーンを削除
+        for metarig_bone in list(armature_metarig.edit_bones):
+            if metarig_bone.name in ["pelvis.L", "pelvis.R", "breast.L", "breast.R"]:
+                armature_metarig.edit_bones.remove(metarig_bone)
+
+    return bone_mapping
+
+
+def remove_unmapped_spine_bones(metarig: bpy.types.Object, bone_mapping) -> list:
+    """
+    未マッピングの spine.* ボーンを削除する関数（第2段階）
+
+    位置合わせ完了後、Rigify生成前に呼ぶ。
+    VRMのオプションボーン（upperChest, neck, chest）が存在しない場合に
+    対応するメタリグの spine.* を削除する。
+    削除後、残った spine.* を spine / spine.001 / spine.002 ... と連番に振り直し、
+    bone_mapping も更新して返す（Rigify の DEF ボーン名と一致させるため）。
+
+    Args:
+        metarig: Rigifyのメタリグオブジェクト
+        bone_mapping: ボーンマッピングのリスト
+
+    Returns:
+        更新された bone_mapping
+    """
+    mapped_metarig_bone_names = set(
+        [metarig_bone for metarig_bone, vrm_bone in bone_mapping])
+    armature_metarig: bpy.types.Armature = metarig.data
+
+    with ModeContext.editing(metarig):
+        # --- 第1パス: 未マッピングの spine.* を削除 ---
+        for metarig_bone in list(armature_metarig.edit_bones):
             if metarig_bone.name in mapped_metarig_bone_names:
                 continue
-            if metarig_bone.name in ["pelvis.L", "pelvis.R"]:
-                # print(f"removing: metarig pelvis bone'{metarig_bone.name}'")
-                armature_metarig.edit_bones.remove(metarig_bone)
-                continue
-            if metarig_bone.name in ["breast.L", "breast.R"]:
-                # print(f"removing: can't be used in VRM'{get_full_bone_path(metarig_bone)}'")
-                armature_metarig.edit_bones.remove(metarig_bone)
-                continue
-            if metarig_bone.name not in ["spine.003"]:
-                # print(f"metarig bone is not mapped '{get_full_bone_path(metarig_bone)}'")
+            if not re.match(r"^spine(\.\d+)?$", metarig_bone.name):
                 continue
 
-            # print(f"removing: unmapped metarig bone'{get_full_bone_path(metarig_bone)}'")
+            # 子ボーンの親を、削除されない直近のマッピード祖先に付け替える
+            new_parent = metarig_bone.parent
+            while new_parent is not None:
+                if new_parent.name in mapped_metarig_bone_names:
+                    break
+                if not re.match(r"^spine(\.\d+)?$", new_parent.name):
+                    break
+                new_parent = new_parent.parent
+
+            for child in list(metarig_bone.children):
+                child.parent = new_parent
+                # spine チェーンの head を親の tail にスナップして接続を保証
+                if re.match(r"^spine(\.\d+)?$", child.name):
+                    child.use_connect = True
+                    child.use_connect = False
+
             armature_metarig.edit_bones.remove(metarig_bone)
+
+        # --- 第2パス: 残った spine.* を親から順に並べ、連番に振り直す ---
+        # spine チェーンをルートから順に収集
+        spine_chain = []
+        current = armature_metarig.edit_bones.get("spine")
+        while current is not None and re.match(r"^spine(\.\d+)?$", current.name):
+            spine_chain.append(current)
+            spine_children = [
+                c for c in current.children
+                if re.match(r"^spine(\.\d+)?$", c.name)
+            ]
+            current = spine_children[0] if spine_children else None
+
+        # bone_mapping の旧 spine 名 → vrm 名 の対応を保持
+        old_spine_mapping = {
+            mb: vb for mb, vb in bone_mapping
+            if re.match(r"^spine(\.\d+)?$", mb)
+        }
+
+        # 新しい連番名を付ける（spine, spine.001, spine.002, ...）
+        old_to_new = {}
+        for i, bone in enumerate(spine_chain):
+            new_name = "spine" if i == 0 else f"spine.{i:03d}"
+            old_to_new[bone.name] = new_name
+
+        # 一旦すべて仮名にリネーム（衝突回避）
+        for bone in spine_chain:
+            bone.name = f"__tmp_spine_{bone.name}__"
+
+        # 正式な連番名に変更
+        for bone in spine_chain:
+            tmp_name = bone.name  # "__tmp_spine_XXX__"
+            orig_name = tmp_name[len("__tmp_spine_"):-len("__")]
+            bone.name = old_to_new[orig_name]
+
+        # bone_mapping を更新（spine エントリの metarig 側の名前を新連番名に差し替え）
+        new_bone_mapping = []
+        spine_chain_new_names = [bone.name for bone in spine_chain]
+        spine_vrm_values = [old_spine_mapping[old] for old in sorted(
+            old_spine_mapping.keys(),
+            key=lambda x: int(x.split(".")[1]) if "." in x else 0
+        )]
+        for mb, vb in bone_mapping:
+            if re.match(r"^spine(\.\d+)?$", mb):
+                continue  # 後でまとめて追加
+            new_bone_mapping.append((mb, vb))
+        for new_name, vrm_name in zip(spine_chain_new_names, spine_vrm_values):
+            new_bone_mapping.append((new_name, vrm_name))
+
+    return new_bone_mapping
 
 
 def position_metarig_bones_to_vrm_model(
@@ -356,20 +445,40 @@ def position_metarig_bones_to_vrm_model(
 #region メタリグボーンの調整関数
 #################################################
 
-def adjust_position_of_metarig_spine_bones(metarig: bpy.types.Object):
+def adjust_position_of_metarig_spine_bones(metarig: bpy.types.Object, bone_mapping: list):
     """
     メタリグの脊椎ボーンの位置を調整する関数
     特に首の付け根あたりのボーン接続を調整
-    
+
+    bone_mapping から head ボーンに対応するメタリグボーンの親（neck相当）を特定し、
+    use_connect を一度ON→OFFにして位置を調整する。
+    neck がオプションで存在しない場合はスキップする。
+
     Args:
         metarig: Rigifyのメタリグオブジェクト
+        bone_mapping: ボーンマッピングのリスト
     """
     armature_metarig: bpy.types.Armature = metarig.data
+
+    # spine.* のみを対象に head に対応するメタリグボーン名を取得し、
+    # その親ボーン（neck相当）を特定する
+    spine_entries = [
+        (mb, vb) for mb, vb in bone_mapping
+        if re.match(r"^spine(\.\d+)?$", mb)
+    ]
+
     with ModeContext.editing(metarig):
-        # spine.004はネックボーン（首）の付け根
-        # 一度接続してから切断することで位置調整を行う
-        armature_metarig.edit_bones["spine.004"].use_connect = True
-        armature_metarig.edit_bones["spine.004"].use_connect = False
+        # spine エントリの末尾が head、その1つ前が neck相当
+        # ただし neck が存在しない場合（spine エントリが1本以下）はスキップ
+        if len(spine_entries) < 2:
+            return
+
+        neck_metarig_bone_name = spine_entries[-2][0]
+        neck_bone = armature_metarig.edit_bones.get(neck_metarig_bone_name)
+        if neck_bone:
+            # 一度接続してから切断することで位置調整を行う
+            neck_bone.use_connect = True
+            neck_bone.use_connect = False
 
 
 def Modify_metarig_limb_rotation_axes(metarig: bpy.types.Object):
@@ -502,7 +611,7 @@ def rename_rig_bones_to_match_vrm_model_vertex_groups(
         rig_object: bpy.types.Object, bone_mapping, bone_name_mapping=None):
     """
     Rigifyリグのボーン名をVRMモデルの頂点グループ名に合わせる関数
-    
+
     Args:
         rig_object: Rigifyリグオブジェクト
         bone_mapping: ボーンマッピングのリスト
@@ -511,9 +620,31 @@ def rename_rig_bones_to_match_vrm_model_vertex_groups(
     armature_rig: bpy.types.Armature = rig_object.data
 
     with ModeContext.editing(rig_object):
+        # デバッグ: spine 系 DEF/ORG ボーンを全列挙
+        print("==== DEBUG: spine-related bones in rig ====")
+        for bone in sorted(armature_rig.edit_bones, key=lambda b: b.name):
+            if re.match(r"^(DEF|ORG|MCH)-spine", bone.name):
+                print(f"  {bone.name}  use_deform={bone.use_deform}  parent={bone.parent.name if bone.parent else None}")
+        print("==== DEBUG: bone_mapping (spine entries) ====")
+        for mb, vb in bone_mapping:
+            if re.match(r"^spine(\.\d+)?$", mb):
+                print(f"  metarig={mb}  vrm={vb}")
+        print("==== END DEBUG ====")
+
+        # spine チェーン末尾のボーン名を特定（Rigify は DEF- を生成しない）
+        spine_entries = [
+            mb for mb, vb in bone_mapping
+            if re.match(r"^spine(\.\d+)?$", mb)
+        ]
+        spine_tail_bone = spine_entries[-1] if spine_entries else None
+
         for metarig_bone_name, vrm_bone_name in bone_mapping:
             # 目のボーンは特別処理（ORGプレフィックスを使用）
             if metarig_bone_name in ["eye.L", "eye.R"]:
+                rig_bone = armature_rig.edit_bones[f"ORG-{metarig_bone_name}"]
+                rig_bone.use_deform = True
+            elif metarig_bone_name == spine_tail_bone:
+                # spine チェーン末尾（head相当）は Rigify が DEF- を生成しないため ORG- を使用
                 rig_bone = armature_rig.edit_bones[f"ORG-{metarig_bone_name}"]
                 rig_bone.use_deform = True
             else:
@@ -556,46 +687,47 @@ def attach_unmapped_vrm_model_bones_to_rig(
             reverse_mapping[orig_name] = std_name
     
     with ModeContext.editing(rig_object):
-        for vrm_bone in armature_vrm.bones:
-            # vrm_boneの名前を取得（標準化後の名前）
-            vrm_bone_name = vrm_bone.name
-            
-            # リグでの名前を確認（標準化前の名前で比較）
-            original_name = bone_name_mapping.get(vrm_bone_name, vrm_bone_name) if bone_name_mapping else vrm_bone_name
-            bone_already_in_rig = original_name in armature_rig.edit_bones
-            
-            vrm_bone_has_parent = bool(vrm_bone.parent)
-            if bone_already_in_rig or not vrm_bone_has_parent:
-                continue
-                
-            # 親ボーンの名前も処理
-            vrm_parent_name = vrm_bone.parent.name
-            parent_original_name = bone_name_mapping.get(vrm_parent_name, vrm_parent_name) if bone_name_mapping else vrm_parent_name
-            
-            parent_exists_in_rig = parent_original_name in armature_rig.edit_bones
-            if not parent_exists_in_rig:
-                continue
-                
-            # 親ボーンをリグで取得
-            parent_bone_in_rig = armature_rig.edit_bones[parent_original_name]
-            print(f"generating bone '{get_full_bone_path(parent_bone_in_rig)}/{original_name}'")
-            
-            # ボーン名を決定（オリジナル名を使用）
-            bone_in_rig = armature_rig.edit_bones.new(original_name)
-            bone_in_rig.head = vrm_bone.head_local
-            bone_in_rig.tail = vrm_bone.tail_local
-            bone_in_rig.parent = parent_bone_in_rig
-            
-            # Blenderバージョンによる処理分岐
-            if blender_version() <= 3:
-                print('Blender version is less than 3')
-                bone_in_rig.layers = parent_bone_in_rig.layers
-                continue
-            if blender_version() >= 4:
-                pass
-            # Blender 4以降ではコレクションにボーンを追加
-            for collection in parent_bone_in_rig.collections:
-                collection.assign(bone_in_rig)
+        # 親が追加されるたびに子も追加できるよう、未追加ボーンがなくなるまで繰り返す
+        remaining = list(armature_vrm.bones)
+        while True:
+            added_any = False
+            still_remaining = []
+            for vrm_bone in remaining:
+                vrm_bone_name = vrm_bone.name
+                original_name = bone_name_mapping.get(vrm_bone_name, vrm_bone_name) if bone_name_mapping else vrm_bone_name
+
+                if original_name in armature_rig.edit_bones:
+                    continue  # すでにリグにある
+
+                if not vrm_bone.parent:
+                    continue  # ルートボーンはスキップ
+
+                vrm_parent_name = vrm_bone.parent.name
+                parent_original_name = bone_name_mapping.get(vrm_parent_name, vrm_parent_name) if bone_name_mapping else vrm_parent_name
+
+                if parent_original_name not in armature_rig.edit_bones:
+                    still_remaining.append(vrm_bone)
+                    continue
+
+                parent_bone_in_rig = armature_rig.edit_bones[parent_original_name]
+                print(f"generating bone '{get_full_bone_path(parent_bone_in_rig)}/{original_name}'")
+
+                bone_in_rig = armature_rig.edit_bones.new(original_name)
+                bone_in_rig.head = vrm_bone.head_local
+                bone_in_rig.tail = vrm_bone.tail_local
+                bone_in_rig.parent = parent_bone_in_rig
+
+                if blender_version() <= 3:
+                    bone_in_rig.layers = parent_bone_in_rig.layers
+                else:
+                    for collection in parent_bone_in_rig.collections:
+                        collection.assign(bone_in_rig)
+
+                added_any = True
+
+            remaining = still_remaining
+            if not added_any:
+                break
 
 #endregion
 
