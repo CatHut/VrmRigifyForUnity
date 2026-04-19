@@ -816,36 +816,49 @@ def  modify_rigify_rig_eyes_control_bones(rig_object):
             controller_y = eye_l_bone.head.y
 
         print(f"[eye pos debug] eye.L local:      head=({eye_local_x:.4f}, {eye_l_bone.head.y:.4f}, {eye_local_z:.4f})")
-        print(f"[eye pos debug] MCH-eye.L local:  head y={mch_eye_bone.head.y:.4f}" if mch_eye_bone else "[eye pos debug] MCH-eye.L: not found")
-        print(f"[eye pos debug] master_eye.L local head y={master_eye_bone.head.y:.4f}" if master_eye_bone else "[eye pos debug] master_eye.L: not found")
+        print(f"[eye pos debug] MCH-eye.L local:  head y={mch_eye_bone.head.y:.4f}  tail y={mch_eye_bone.tail.y:.4f}  length={mch_eye_bone.length:.4f}" if mch_eye_bone else "[eye pos debug] MCH-eye.L: not found")
+        if master_eye_bone:
+            print(f"[eye pos debug] master_eye.L local head y={master_eye_bone.head.y:.4f}  tail y={master_eye_bone.tail.y:.4f}")
+        else:
+            print("[eye pos debug] master_eye.L: not found")
         print(f"[eye pos debug] controller_y={controller_y:.4f}")
 
-        # 左右の目ボーン（コントローラ）の位置調整
-        # eye.L/R のY位置はVRMモデルの目の位置（eye_local_y）のまま維持し、
-        # X/Z のみ調整する。use_connect を True に戻して eyes との接続を保持する。
+        # eye.L/R を MCH-eye.L より前方（Yマイナス）に配置する。
+        # MCH-eye.L の Y（眼球根本）より eye.L が後方にあると Damped Track が後ろを向くため、
+        # controller_y（= MCH-eye.L head.y）から eye_length 分だけ前方にオフセットした位置を使う。
+        # use_connect=False にして eyes から独立させ Y 位置を個別制御する。
+        eye_front_y = controller_y - eye_length
+
         for rig_bone in rig_object.data.edit_bones:
             if rig_bone.name == "eye.L":
                 rig_bone.head.x = eye_local_x
+                rig_bone.head.y = eye_front_y
                 rig_bone.head.z = eye_local_z
                 rig_bone.tail.x = eye_local_x
+                rig_bone.tail.y = eye_front_y
                 rig_bone.tail.z = eye_local_z + eye_length
-                rig_bone.use_connect = True
+                rig_bone.use_connect = False
                 continue
 
             if rig_bone.name == "eye.R":
                 rig_bone.head.x = -eye_local_x
+                rig_bone.head.y = eye_front_y
                 rig_bone.head.z = eye_local_z
                 rig_bone.tail.x = -eye_local_x
+                rig_bone.tail.y = eye_front_y
                 rig_bone.tail.z = eye_local_z + eye_length
-                rig_bone.use_connect = True
+                rig_bone.use_connect = False
                 continue
 
-        # eyes コントロールボーンのZ位置を eye.L に合わせ、Y位置は前方（controller_y）を維持
+        # eyes コントロールボーンの Z/Y 位置を調整
         for rig_bone in rig_object.data.edit_bones:
             if rig_bone.name == "eyes":
+                print(f"[eye pos debug] eyes before: head=({rig_bone.head.x:.4f}, {rig_bone.head.y:.4f}, {rig_bone.head.z:.4f})  tail=({rig_bone.tail.x:.4f}, {rig_bone.tail.y:.4f}, {rig_bone.tail.z:.4f})")
                 rig_bone.head.z = eye_local_z
+                rig_bone.head.y = eye_front_y
                 rig_bone.tail.z = eye_local_z + eye_length
-                print(f"[eye pos debug] eyes after: head=({rig_bone.head.x:.4f}, {rig_bone.head.y:.4f}, {rig_bone.head.z:.4f})")
+                rig_bone.tail.y = eye_front_y
+                print(f"[eye pos debug] eyes after:  head=({rig_bone.head.x:.4f}, {rig_bone.head.y:.4f}, {rig_bone.head.z:.4f})  tail=({rig_bone.tail.x:.4f}, {rig_bone.tail.y:.4f}, {rig_bone.tail.z:.4f})")
                 break
 
 #endregion

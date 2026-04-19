@@ -150,6 +150,11 @@ class VRM_OT_ToRigify(Operator):
             vrm_rigify.change_meshes_modifier_object(rig_object)
 
             # 親子関係など最終調整
+            print("\n[eye mapping debug] bone_mapping eye entries:")
+            for mb, vb in bone_mapping:
+                if mb in ["eye.L", "eye.R"]:
+                    resolved = bone_name_mapping.get(vb, vb) if bone_name_mapping else vb
+                    print(f"  metarig={mb}  vrm_std={vb}  resolved={resolved}")
             vrm_rigify.adjust_bone_hierarchy_and_constraints_for_Unity(rig_object, bone_mapping, bone_name_mapping)
             vrm_rigify.debug_eye_constraints(rig_object)
 
