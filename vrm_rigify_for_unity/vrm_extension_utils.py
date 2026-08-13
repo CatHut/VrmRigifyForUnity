@@ -47,9 +47,12 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
         if armature_vrm.vrm_addon_extension.vrm0.meta.texture:
             armature_rig.vrm_addon_extension.vrm0.meta.texture = armature_vrm.vrm_addon_extension.vrm0.meta.texture
             
-        # ブレンドシェイプマスターのコピー（既存のコードでも実装されている）
-        blend_shape_master = armature_vrm.vrm_addon_extension.vrm0["blend_shape_master"]
-        armature_rig.vrm_addon_extension.vrm0["blend_shape_master"] = blend_shape_master
+        # ブレンドシェイプマスターのコピー
+        # グループ丸ごとの代入はできないため再帰的にコピーする
+        from .vrm_rigify import copy_property_group
+        copy_property_group(
+            armature_rig.vrm_addon_extension.vrm0.blend_shape_master,
+            armature_vrm.vrm_addon_extension.vrm0.blend_shape_master)
     except Exception as e:
         print(f"Error while copying VRM0 meta info: {e}")
         
@@ -190,10 +193,12 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
     
     # Expressions（表情）のコピー
     try:
-        # 既存の実装と類似
-        expressions = armature_vrm.vrm_addon_extension.vrm1["expressions"]
-        armature_rig.vrm_addon_extension.vrm1["expressions"] = expressions
-        
+        # グループ丸ごとの代入はできないため再帰的にコピーする
+        from .vrm_rigify import copy_property_group
+        copy_property_group(
+            armature_rig.vrm_addon_extension.vrm1.expressions,
+            armature_vrm.vrm_addon_extension.vrm1.expressions)
+
         # 表情内のメッシュ参照を更新（マテリアルバインディング、モーフターゲットバインディングなど）
         # メッシュオブジェクトのマッピングを作成
         mesh_object_mapping = {}
@@ -218,32 +223,52 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
                             print(f"Mapped mesh: {vrm_child.name} → {rig_child.name}")
                             break
                             
+        # 張り替えた件数と、解決できなかったバインドを集計する
+        updated_count = 0
+        pending_meshes = []
+
+        def update_morph_bind_mesh_references(expression, label):
+            """モーフターゲットバインドのメッシュ参照をリグ側のメッシュへ張り替える"""
+            nonlocal updated_count
+            for morph_bind in getattr(expression, 'morph_target_binds', []):
+                # コピー直後はポインタが未解決で mesh_object_name が空の場合が
+                # あるため、退避してある名前も参照する
+                old_mesh_name = (morph_bind.node.mesh_object_name
+                                 or morph_bind.node.saved_mesh_object_name_to_restore)
+                if not old_mesh_name:
+                    continue
+
+                new_mesh_name = mesh_object_mapping.get(old_mesh_name, old_mesh_name)
+                # メッシュがまだ存在しない場合に備え、名前を退避しておく
+                morph_bind.node.saved_mesh_object_name_to_restore = new_mesh_name
+                if new_mesh_name in bpy.data.objects:
+                    morph_bind.node.mesh_object_name = new_mesh_name
+                    updated_count += 1
+                else:
+                    pending_meshes.append(f"{label} → '{new_mesh_name}'")
+
         # すべての表情（プリセットとカスタム）を更新
         # プリセット表情の処理
         preset_expressions = expressions_dst.preset
         for preset_name in dir(preset_expressions):
             if preset_name.startswith('__') or not hasattr(preset_expressions, preset_name):
                 continue
-                
+
             preset_expr = getattr(preset_expressions, preset_name)
             if hasattr(preset_expr, 'morph_target_binds'):
-                # モーフターゲットバインドの更新
-                for morph_bind in preset_expr.morph_target_binds:
-                    old_mesh_name = morph_bind.node.mesh_object_name
-                    if old_mesh_name in mesh_object_mapping:
-                        morph_bind.node.mesh_object_name = mesh_object_mapping[old_mesh_name]
-                        print(f"Updated mesh reference in preset '{preset_name}': {old_mesh_name} → {mesh_object_mapping[old_mesh_name]}")
-        
+                update_morph_bind_mesh_references(preset_expr, f"preset '{preset_name}'")
+
         # カスタム表情の処理
         for custom_expr in expressions_dst.custom:
-            # モーフターゲットバインドの更新
-            for morph_bind in custom_expr.morph_target_binds:
-                old_mesh_name = morph_bind.node.mesh_object_name
-                if old_mesh_name in mesh_object_mapping:
-                    morph_bind.node.mesh_object_name = mesh_object_mapping[old_mesh_name]
-                    print(f"Updated mesh reference in custom expression: {old_mesh_name} → {mesh_object_mapping[old_mesh_name]}")
+            update_morph_bind_mesh_references(custom_expr, "custom expression")
+
+        print(f"Expressions copied: {updated_count} morph target bind(s) updated")
+        if pending_meshes:
+            print(f"  mesh not found (kept for later restore): {', '.join(pending_meshes)}")
     except Exception as e:
+        import traceback
         print(f"Error while copying expressions: {e}")
+        traceback.print_exc()
     
     # Look Atの設定をコピー
     try:
@@ -340,13 +365,15 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
                     new_collider.bpy_object.empty_display_size = src_collider.bpy_object.empty_display_size
                     
                     # 位置と回転をコピー
+                    # VRMアドオン4.x以降は set_offset()/set_tail() が廃止され、
+                    # offset/tail プロパティへの代入に変更されている
                     if new_collider.shape_type == new_collider.SHAPE_TYPE_SPHERE.identifier:
                         # 球体の場合、位置をコピー
-                        new_collider.shape.sphere.set_offset(src_collider.shape.sphere.offset)
+                        new_collider.shape.sphere.offset = src_collider.shape.sphere.offset
                     elif new_collider.shape_type == new_collider.SHAPE_TYPE_CAPSULE.identifier:
                         # カプセルの場合、両端の位置をコピー
-                        new_collider.shape.capsule.set_offset(src_collider.shape.capsule.offset)
-                        new_collider.shape.capsule.set_tail(src_collider.shape.capsule.tail)
+                        new_collider.shape.capsule.offset = src_collider.shape.capsule.offset
+                        new_collider.shape.capsule.tail = src_collider.shape.capsule.tail
                         
                         # 子オブジェクト（tail）のサイズをコピー
                         if new_collider.bpy_object.children and src_collider.bpy_object.children:
@@ -366,7 +393,10 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
             # コライダー参照のコピー
             for collider_ref in collider_group.colliders:
                 new_ref = new_group.colliders.add()
-                new_ref.collider_name = collider_ref.collider_name
+                # VRMアドオン4.x以降は collider_name が廃止され、
+                # collider_uuid のみでコライダーを参照する
+                if hasattr(collider_ref, "collider_name"):
+                    new_ref.collider_name = collider_ref.collider_name
                 new_ref.collider_uuid = collider_ref.collider_uuid
         
         # スプリングのコピー
@@ -393,7 +423,9 @@ def copy_vrm_extension_from_armature(vrm_object, rig_object):
             # コライダーグループ参照のコピー
             for collider_group_ref in spring.collider_groups:
                 new_ref = new_spring.collider_groups.add()
-                new_ref.collider_group_name = collider_group_ref.collider_group_name
+                # collider_name と同様に4.x以降は name が廃止されている
+                if hasattr(collider_group_ref, "collider_group_name"):
+                    new_ref.collider_group_name = collider_group_ref.collider_group_name
                 new_ref.collider_group_uuid = collider_group_ref.collider_group_uuid
         
         # アニメーション設定のコピー

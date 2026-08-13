@@ -149,6 +149,10 @@ class VRM_OT_ToRigify(Operator):
             vrm_rigify.copy_meshes_between_armatures(vrm_object, rig_object, bone_name_mapping)
             vrm_rigify.change_meshes_modifier_object(rig_object)
 
+            # 表情のバインド先メッシュ参照を復元
+            # （メッシュが揃ってからでないと解決できないためここで行う）
+            vrm_rigify.restore_expression_mesh_references(rig_object)
+
             # 親子関係など最終調整
             vrm_rigify.adjust_bone_hierarchy_and_constraints_for_Unity(rig_object)
             vrm_rigify.debug_eye_constraints(rig_object)

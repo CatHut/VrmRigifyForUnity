@@ -619,6 +619,27 @@ def attach_unmapped_vrm_model_bones_to_rig(
 #region VRMモデルの特殊機能とRigifyリグの連携関数
 #################################################
 
+# メッシュ参照を保持するPropertyGroupの扱い
+#
+# MeshObjectPropertyGroup.mesh_object_name はgetter/setter付きで、
+# 値の実体は bpy_object（オブジェクトへのポインタ）が持っている。
+# setterは「代入時点でそのメッシュが存在しない」場合にポインタを
+# クリアしてしまい、getterもポインタが空なら "" を返す。
+#
+# メッシュのコピーより先に表情をコピーする実行順のため、素直に
+# mesh_object_name を代入するとバインド先が失われる。そこで名前は
+# 復元用フィールド saved_mesh_object_name_to_restore に退避しておき、
+# メッシュが揃った後に restore_...() で解決させる
+MESH_OBJECT_NAME     = "mesh_object_name"
+MESH_OBJECT_POINTER  = "bpy_object"
+MESH_OBJECT_SAVED    = "saved_mesh_object_name_to_restore"
+
+# ボーン参照は bone_name のsetterがuuidを引き当てるため、
+# uuid側を直接コピーしてはいけない
+BONE_NAME            = "bone_name"
+BONE_UUID            = "bone_uuid"
+
+
 def copy_property_group(dst, src):
     """
     PropertyGroupの内容を再帰的にコピーする関数
@@ -627,24 +648,47 @@ def copy_property_group(dst, src):
     （TypeError: Cannot assign a 'IDPropertyGroup' value to the existing ...）、
     RNA定義をたどって値を1つずつコピーする
 
-    オブジェクト参照（PointerProperty）はコピー先のアーマチュアでは
-    解決できない場合があるが、VRMアドオンが名前からの復元用フィールドを
-    別途持っているため、コピー後に復元処理を呼ぶことで対応する
-
     Args:
         dst: コピー先のPropertyGroup
         src: コピー元のPropertyGroup
     """
+    property_names = {prop.identifier for prop in src.bl_rna.properties}
+
+    skip_names = set()
+
+    # メッシュ参照グループは、参照先がまだ存在しなくても名前が失われないよう
+    # 復元用フィールドへ退避する形でコピーする
+    if MESH_OBJECT_NAME in property_names:
+        skip_names.update((MESH_OBJECT_NAME, MESH_OBJECT_POINTER, MESH_OBJECT_SAVED))
+        # getterはポインタ経由で解決するため、元の名前が取れない場合は
+        # 退避済みの名前をそのまま引き継ぐ
+        mesh_name = getattr(src, MESH_OBJECT_NAME, "") \
+            or getattr(src, MESH_OBJECT_SAVED, "")
+        if mesh_name:
+            setattr(dst, MESH_OBJECT_SAVED, mesh_name)
+            # 参照先が既に存在するならこの時点で解決しておく
+            if mesh_name in bpy.data.objects:
+                setattr(dst, MESH_OBJECT_NAME, mesh_name)
+
+    # ボーン参照はuuid側を直接コピーせず、bone_nameのsetterに任せる
+    if BONE_NAME in property_names:
+        skip_names.add(BONE_UUID)
+
     for prop in src.bl_rna.properties:
-        if prop.is_readonly or prop.identifier == "rna_type":
+        identifier = prop.identifier
+        if identifier == "rna_type" or identifier in skip_names:
             continue
 
-        identifier = prop.identifier
         value = getattr(src, identifier, None)
 
+        # 注意: PropertyGroupを指すPointerPropertyやCollectionPropertyは
+        # 「代入不可」なのでis_readonlyがTrueになる。しかし中身は書き換え
+        # 可能なため、is_readonlyによる除外は単純な値のコピーにのみ適用する
         if prop.type == "COLLECTION":
             # コレクションは一旦クリアしてから要素を作り直す
-            dst_collection = getattr(dst, identifier)
+            dst_collection = getattr(dst, identifier, None)
+            if dst_collection is None or not hasattr(dst_collection, "add"):
+                continue
             dst_collection.clear()
             for src_item in value:
                 copy_property_group(dst_collection.add(), src_item)
@@ -655,19 +699,21 @@ def copy_property_group(dst, src):
             if isinstance(value, bpy.types.PropertyGroup) and dst_value is not None:
                 # ネストしたPropertyGroupは再帰的にコピー
                 copy_property_group(dst_value, value)
-            else:
-                # ID（オブジェクトなど）への参照はそのまま代入
+            elif not prop.is_readonly:
+                # マテリアルなどID自体への参照はそのまま代入
                 try:
                     setattr(dst, identifier, value)
-                except (AttributeError, TypeError):
-                    pass
+                except (AttributeError, TypeError) as e:
+                    print(f"[VrmRigify] failed to copy pointer '{identifier}': {e}")
+            continue
+
+        if prop.is_readonly:
             continue
 
         try:
             setattr(dst, identifier, value)
-        except (AttributeError, TypeError):
-            # 読み取り専用や代入不可のプロパティはスキップ
-            pass
+        except (AttributeError, TypeError) as e:
+            print(f"[VrmRigify] failed to copy property '{identifier}': {e}")
 
 
 def copy_shape_key_controls_from_vrm_armature(
@@ -692,11 +738,31 @@ def copy_shape_key_controls_from_vrm_armature(
     copy_property_group(
         expressions_rig, armature_vrm.vrm_addon_extension.vrm1.expressions)
 
-    # モーフターゲットのバインド先メッシュ参照を名前から復元する
-    # （PropertyGroupのコピーではオブジェクトへのポインタが失われる場合があるため）
-    if hasattr(expressions_rig, "restore_expression_morph_target_bind_object_assignments"):
-        expressions_rig.restore_expression_morph_target_bind_object_assignments(
-            bpy.context)
+
+def restore_expression_mesh_references(rig_object: bpy.types.Object):
+    """
+    表情のモーフターゲットバインドのメッシュ参照を名前から復元する関数
+
+    表情のコピー時点ではリグ側のメッシュがまだ存在しないため、
+    メッシュのコピーが完了した後に呼び出す必要がある
+
+    Args:
+        rig_object: Rigifyリグオブジェクト
+    """
+    armature_rig: bpy.types.Armature = rig_object.data
+    expressions = armature_rig.vrm_addon_extension.vrm1.expressions
+
+    if hasattr(expressions, "restore_expression_morph_target_bind_object_assignments"):
+        expressions.restore_expression_morph_target_bind_object_assignments(bpy.context)
+
+    # 復元結果を確認し、解決できなかったバインドを報告する
+    unresolved = 0
+    for expression in expressions.all_name_to_expression_dict().values():
+        for morph_target_bind in expression.morph_target_binds:
+            if not morph_target_bind.node.mesh_object_name:
+                unresolved += 1
+    if unresolved:
+        print(f"[VrmRigify] {unresolved} morph target bind(s) could not be resolved")
 
 
 def  modify_rigify_rig_eyes_control_bones(rig_object):
