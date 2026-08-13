@@ -148,6 +148,24 @@ def modify_metarig_limb_segments(metarig: bpy.types.Object):
                 bone.rigify_parameters.segments = 1
     
 
+def call_vrm_operator_with_armature(op, armature_object):
+    """
+    アーマチュアを指定するVRMアドオンのオペレーターを呼び出す関数
+
+    VRMアドオンのバージョンによってプロパティ名が異なるため、
+    実行時に判定して適切なキーワードで呼び出す
+    （3.x以降は armature_name → armature_object_name に変更されている）
+
+    Args:
+        op: 呼び出すVRMアドオンのオペレーター
+        armature_object: 対象のアーマチュアオブジェクト
+    """
+    if "armature_object_name" in op.get_rna_type().properties:
+        op(armature_object_name=armature_object.name)
+    else:
+        op(armature_name=armature_object.name)
+
+
 def rename_vrm_model_bones_name(vrm_object):
     """
     VRMモデルのボーン名を標準化する関数
@@ -155,7 +173,7 @@ def rename_vrm_model_bones_name(vrm_object):
     """
     vrm_armature = vrm_object.data # edit_boneの取得に必要
 
-    bpy.ops.vrm.bones_rename(armature_name="Armature")
+    call_vrm_operator_with_armature(bpy.ops.vrm.bones_rename, vrm_object)
 
 
 def store_original_bone_names(vrm_object) -> dict:
@@ -247,13 +265,11 @@ def mapping_metarig_and_vrm_model_bones(
         (メタリグのボーン名, VRMモデルのボーン名)のタプルのリスト
     """
     # 自動的にVRM1のヒューマノイドボーンを割り当て
-    bpy.ops.vrm.assign_vrm1_humanoid_human_bones_automatically(
-        armature_name = metarig.name
-    )
+    call_vrm_operator_with_armature(
+        bpy.ops.vrm.assign_vrm1_humanoid_human_bones_automatically, metarig)
 
-    bpy.ops.vrm.assign_vrm1_humanoid_human_bones_automatically(
-        armature_name = vrm_object.name
-    )
+    call_vrm_operator_with_armature(
+        bpy.ops.vrm.assign_vrm1_humanoid_human_bones_automatically, vrm_object)
 
     # VRM拡張データからヒューマノイドボーン情報を取得
     armature_metarig: bpy.types.Armature = metarig.data
@@ -603,11 +619,62 @@ def attach_unmapped_vrm_model_bones_to_rig(
 #region VRMモデルの特殊機能とRigifyリグの連携関数
 #################################################
 
+def copy_property_group(dst, src):
+    """
+    PropertyGroupの内容を再帰的にコピーする関数
+
+    Blenderでは既存のGroup IDPropertyへグループを丸ごと代入できないため
+    （TypeError: Cannot assign a 'IDPropertyGroup' value to the existing ...）、
+    RNA定義をたどって値を1つずつコピーする
+
+    オブジェクト参照（PointerProperty）はコピー先のアーマチュアでは
+    解決できない場合があるが、VRMアドオンが名前からの復元用フィールドを
+    別途持っているため、コピー後に復元処理を呼ぶことで対応する
+
+    Args:
+        dst: コピー先のPropertyGroup
+        src: コピー元のPropertyGroup
+    """
+    for prop in src.bl_rna.properties:
+        if prop.is_readonly or prop.identifier == "rna_type":
+            continue
+
+        identifier = prop.identifier
+        value = getattr(src, identifier, None)
+
+        if prop.type == "COLLECTION":
+            # コレクションは一旦クリアしてから要素を作り直す
+            dst_collection = getattr(dst, identifier)
+            dst_collection.clear()
+            for src_item in value:
+                copy_property_group(dst_collection.add(), src_item)
+            continue
+
+        if prop.type == "POINTER":
+            dst_value = getattr(dst, identifier, None)
+            if isinstance(value, bpy.types.PropertyGroup) and dst_value is not None:
+                # ネストしたPropertyGroupは再帰的にコピー
+                copy_property_group(dst_value, value)
+            else:
+                # ID（オブジェクトなど）への参照はそのまま代入
+                try:
+                    setattr(dst, identifier, value)
+                except (AttributeError, TypeError):
+                    pass
+            continue
+
+        try:
+            setattr(dst, identifier, value)
+        except (AttributeError, TypeError):
+            # 読み取り専用や代入不可のプロパティはスキップ
+            pass
+
+
 def copy_shape_key_controls_from_vrm_armature(
         rig_object: bpy.types.Object, vrm_object: bpy.types.Object):
     """
     VRMモデルのシェイプキー制御（表情など）をRigifyリグにコピーする関数
-    
+
     Args:
         rig_object: Rigifyリグオブジェクト
         vrm_object: VRMモデルのアーマチュアオブジェクト
@@ -616,12 +683,20 @@ def copy_shape_key_controls_from_vrm_armature(
     armature_vrm: bpy.types.Armature = vrm_object.data
 
     # VRM0のブレンドシェイプマスター（表情制御）をコピー
-    blend_shape_master = armature_vrm.vrm_addon_extension.vrm0["blend_shape_master"]
-    armature_rig.vrm_addon_extension.vrm0["blend_shape_master"] = blend_shape_master
-    
+    copy_property_group(
+        armature_rig.vrm_addon_extension.vrm0.blend_shape_master,
+        armature_vrm.vrm_addon_extension.vrm0.blend_shape_master)
+
     # VRM1の表情情報をコピー
-    expressions = armature_vrm.vrm_addon_extension.vrm1["expressions"]
-    armature_rig.vrm_addon_extension.vrm1["expressions"] = expressions
+    expressions_rig = armature_rig.vrm_addon_extension.vrm1.expressions
+    copy_property_group(
+        expressions_rig, armature_vrm.vrm_addon_extension.vrm1.expressions)
+
+    # モーフターゲットのバインド先メッシュ参照を名前から復元する
+    # （PropertyGroupのコピーではオブジェクトへのポインタが失われる場合があるため）
+    if hasattr(expressions_rig, "restore_expression_morph_target_bind_object_assignments"):
+        expressions_rig.restore_expression_morph_target_bind_object_assignments(
+            bpy.context)
 
 
 def  modify_rigify_rig_eyes_control_bones(rig_object):
