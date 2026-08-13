@@ -111,6 +111,86 @@ def generate_template_metarig(metarig_name: str) -> bpy.types.Object:
     Raises:
         Exception: Rigifyアドオンが有効でない場合
     """
+    # Blender 5.2 では rigify の armature_human_metarig_add 内で
+    # context.active_object が None になり AttributeError で落ちる場合がある。
+    # そのため rigify のメタリグ定義モジュールを直接呼び出し、
+    # アーマチュアの生成とアクティブ化は自前で行う。
+    metarig_module = _get_human_metarig_module()
+    if metarig_module is None:
+        # モジュールを解決できない場合は従来どおりオペレーターにフォールバック
+        return _generate_template_metarig_via_operator(metarig_name)
+
+    # アーマチュアオブジェクトを自前で生成してシーンにリンクする
+    armature_data = bpy.data.armatures.new(metarig_name)
+    metarig = bpy.data.objects.new(metarig_name, armature_data)
+    bpy.context.collection.objects.link(metarig)
+
+    # rigify の create() は EDIT モードで動作するため、
+    # 明示的にアクティブ・選択状態にしてから切り替える
+    _make_sole_active(metarig)
+    bpy.ops.object.mode_set(mode='EDIT')
+    try:
+        metarig_module.create(metarig)
+    finally:
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    return metarig
+
+
+def _get_human_metarig_module():
+    """
+    rigify の human メタリグ定義モジュールを取得する関数
+
+    Returns:
+        メタリグ定義モジュール。取得できない場合は None
+    """
+    import importlib
+
+    # Blender のバージョンによって rigify のメタリグ配置が異なるため順に試す
+    module_paths = [
+        "rigify.metarigs.Basic.human",
+        "rigify.metarigs.human",
+    ]
+    for module_path in module_paths:
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            continue
+        if hasattr(module, "create"):
+            return module
+
+    return None
+
+
+def _make_sole_active(node: bpy.types.Object):
+    """
+    指定オブジェクトだけを選択してアクティブにする関数
+
+    Args:
+        node: アクティブにするオブジェクト
+    """
+    # 既存の編集/ポーズモードを解除してからでないと選択状態を変更できない
+    active = bpy.context.view_layer.objects.active
+    if active is not None and active.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    for other in bpy.context.selected_objects:
+        other.select_set(False)
+
+    node.select_set(True)
+    bpy.context.view_layer.objects.active = node
+
+
+def _generate_template_metarig_via_operator(metarig_name: str) -> bpy.types.Object:
+    """
+    rigify のオペレーター経由でメタリグを生成する従来方式の関数
+
+    Args:
+        metarig_name: 生成するメタリグの名前
+
+    Returns:
+        生成されたメタリグオブジェクト
+    """
     try:
         bpy.ops.object.armature_human_metarig_add()
         metarig = bpy.context.view_layer.objects.active
