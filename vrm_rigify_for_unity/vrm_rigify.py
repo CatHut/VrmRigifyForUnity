@@ -1128,6 +1128,30 @@ def adjust_bone_hierarchy_and_constraints_for_Unity(rig_object):
             constraint.target = rig_object
             constraint.subtarget = target_bone
 
+    # 肩ボーンの制約設定
+    # 肩は Rigify の basic.super_copy で生成されるため、DEFボーンには制約が付かず
+    # 「ORG-shoulder.* の子」という親子関係だけでコントロールに追従している。
+    # 上の parent_adjustments で親を J_Bip_C_UpperChest に張り替えるとこの追従が
+    # 切れてしまうため、ここで Copy Transforms を張って追従を復元する。
+    shoulder_bone_adjustments = {
+        "J_Bip_L_Shoulder": "ORG-shoulder.L",
+        "J_Bip_R_Shoulder": "ORG-shoulder.R",
+    }
+
+    for bone_name, target_bone in shoulder_bone_adjustments.items():
+        pose_bone = rig_object.pose.bones.get(bone_name)
+        if not pose_bone:
+            continue
+
+        # 既に制約がある場合は二重追加しない
+        if any(c.type == 'COPY_TRANSFORMS' for c in pose_bone.constraints):
+            continue
+
+        if target_bone in rig_object.pose.bones:
+            constraint = pose_bone.constraints.new('COPY_TRANSFORMS')
+            constraint.target = rig_object
+            constraint.subtarget = target_bone
+
     bpy.ops.object.mode_set(mode='OBJECT')
 
 #endregion
