@@ -73,30 +73,31 @@ class VRM_OT_ToRigify(Operator):
         # 現在のアクティブオブジェクト（VRMモデル）を取得
         vrm_object = context.active_object
 
+        # ログファイル出力（リリース時は無効化。デバッグ時のみ有効にする）
         # ログファイルのパス（Blendファイルと同じディレクトリ、未保存時はtmp）
-        blend_path = bpy.data.filepath
-        log_dir = os.path.dirname(blend_path) if blend_path else os.path.join(os.path.expanduser("~"), "tmp")
-        os.makedirs(log_dir, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = os.path.join(log_dir, f"vrm_rigify_{timestamp}.log")
+        # blend_path = bpy.data.filepath
+        # log_dir = os.path.dirname(blend_path) if blend_path else os.path.join(os.path.expanduser("~"), "tmp")
+        # os.makedirs(log_dir, exist_ok=True)
+        # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # log_path = os.path.join(log_dir, f"vrm_rigify_{timestamp}.log")
 
         # stdout を tee（コンソールとファイル両方に出力）
-        class _Tee(io.TextIOBase):
-            def __init__(self, original):
-                self._orig = original
-                self._file = open(log_path, "w", encoding="utf-8")
-            def write(self, s):
-                self._orig.write(s)
-                self._file.write(s)
-                return len(s)
-            def flush(self):
-                self._orig.flush()
-                self._file.flush()
-            def close(self):
-                self._file.close()
+        # class _Tee(io.TextIOBase):
+        #     def __init__(self, original):
+        #         self._orig = original
+        #         self._file = open(log_path, "w", encoding="utf-8")
+        #     def write(self, s):
+        #         self._orig.write(s)
+        #         self._file.write(s)
+        #         return len(s)
+        #     def flush(self):
+        #         self._orig.flush()
+        #         self._file.flush()
+        #     def close(self):
+        #         self._file.close()
 
-        tee = _Tee(sys.stdout)
-        sys.stdout = tee
+        # tee = _Tee(sys.stdout)
+        # sys.stdout = tee
 
         try:
             # オリジナルのボーン名を保存
@@ -194,7 +195,8 @@ class VRM_OT_ToRigify(Operator):
             rig_object.select_set(True)
             context.view_layer.objects.active = rig_object
             
-            self.report({'INFO'}, f"VRM to Rigify conversion complete. Log: {log_path}")
+            # self.report({'INFO'}, f"VRM to Rigify conversion complete. Log: {log_path}")
+            self.report({'INFO'}, "VRM to Rigify conversion complete.")
             return {'FINISHED'}
 
         except Exception as e:
@@ -203,9 +205,9 @@ class VRM_OT_ToRigify(Operator):
             self.report({'ERROR'}, f"Error: {str(e)}")
             return {'CANCELLED'}
 
-        finally:
-            sys.stdout = tee._orig
-            tee.close()
+        # finally:
+        #     sys.stdout = tee._orig
+        #     tee.close()
 
 
 #################################################
